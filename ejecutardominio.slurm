@@ -4,7 +4,7 @@
 #SBATCH --error=error_simulacion.txt      # Archivo de errores
 #SBATCH --ntasks=4                        # Número de tareas (procesos MPI)
 #SBATCH --time=00:10:00                   # Tiempo límite de ejecución (10 minutos en este caso)
-#SBATCH --partition=compute               # Tipo de partición (ajustar según Kabré)
+#SBATCH --partition=nu               # Tipo de partición (ajustar según Kabré)
 #SBATCH --mail-type=END                   # Notificaciones al final del trabajo
 #SBATCH --mail-user=joel.ramirez@ulead.ac.cr  # Tu correo para recibir notificaciones
 
