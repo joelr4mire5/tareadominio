@@ -1,136 +1,187 @@
-// Carga de librerías
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
-#define N 8  // Tamaño de la matriz 8x8
+#include <string.h>
 
-// Función para cargar un archivo con una matriz 8x8
-void cargar_dominio(const char *filename, char domain[N][N]) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        perror("No se pudo abrir el archivo");
-        MPI_Abort(MPI_COMM_WORLD, 1);
-    }
-
-    // Leer el archivo y cargar cada valor en la matriz 'domain'
-    for (int i = 0; i < N; i++) {
-        for (int j = 0; j < N; j++) {
-            fscanf(file, " %c", &domain[i][j]);  // Espacio antes de %c para ignorar espacios en blanco
-        }
-    }
-
-    fclose(file);
-}
-
-// Función para contar los vecinos próximos
-void conteo_vecinos(char dominio[N][N], int coordenada_x, int coordenada_y, int *conteo_arbol, int *conteo_lago, int *conteo_desierto) {
-    *conteo_arbol = *conteo_lago = *conteo_desierto = 0;
-
-    // Revisar las 8 posiciones vecinas
-    for (int desplazamiento_x = -1; desplazamiento_x <= 1; desplazamiento_x++) {
-        for (int desplazamiento_y = -1; desplazamiento_y <= 1; desplazamiento_y++) {
-            if (desplazamiento_x == 0 && desplazamiento_y == 0) continue;  // Saltar la celda actual
-
-            int nueva_coordenada_x = coordenada_x + desplazamiento_x;
-            int nueva_coordenada_y= coordenada_y + desplazamiento_y;
-
-            // Verificar que el vecino esté dentro de los límites
-            if (nueva_coordenada_x >= 0 && nueva_coordenada_x < N && nueva_coordenada_y >= 0 && nueva_coordenada_y < N) {
-                if (dominio[nueva_coordenada_x][nueva_coordenada_y] == 'a') (*conteo_arbol)++;
-                else if (dominio[nueva_coordenada_x][nueva_coordenada_y] == 'l') (*conteo_lago)++;
-                else if (dominio[nueva_coordenada_x][nueva_coordenada_y] == 'd') (*conteo_desierto)++;
-            }
-        }
-    }
-}
-
-// Función para aplicar las reglas y evolucionar el dominio un día
-void aplicacion_reglas(char dominio[N][N], char actualizacion_dominio[N][N]) {
-    int conteo_arbol, conteo_lago, conteo_desierto;
-
-    for (int i = 0; i < N; i++) {
-        for (int j = 0; j < N; j++) {
-            conteo_vecinos(dominio, i, j, &conteo_arbol, &conteo_lago, &conteo_desierto);
-
-            // Aplicar reglas basadas en el estado actual y los vecinos
-            if (dominio[i][j] == 'a') {
-                if (conteo_lago >= 4) actualizacion_dominio[i][j] = 'l';
-                else if (conteo_arbol > 4) actualizacion_dominio[i][j] = 'd';
-                else actualizacion_dominio[i][j] = 'a';
-            }
-            else if (dominio[i][j] == 'l') {
-                if (conteo_lago < 3) actualizacion_dominio[i][j] = 'd';
-                else actualizacion_dominio[i][j] = 'l';
-            }
-            else if (dominio[i][j] == 'd') {
-                if (conteo_arbol >= 3) actualizacion_dominio[i][j] = 'a';
-                else actualizacion_dominio[i][j] = 'd';
-            }
-        }
-    }
-}
-
-// Función principal para simular varios días
-void simulacion_dias(char dominio[N][N], int days) {
-    char actualizacion_dominio[N][N];
-
-    for (int day = 0; day < days; day++) {
-        aplicacion_reglas(dominio, actualizacion_dominio);
-
-        // Copiar el dominio actualizado al original para el próximo día
-        for (int i = 0; i < N; i++) {
-            for (int j = 0; j < N; j++) {
-                dominio[i][j] = actualizacion_dominio[i][j];
-            }
-        }
-    }
-}
+#define ROWS 8
+#define COLS 8
 
 int main(int argc, char *argv[]) {
     int rank, size;
-    char dominio[N][N];  // Matriz para almacenar el dominio completo
-    int dias = 10;  // Número de días de simulación, ajustar según se desee
+    char domain[ROWS][COLS];
+    int days;
 
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    // Solo el proceso raíz (rank 0) lee el archivo y carga el dominio
-    if (rank == 0) {
-        cargar_dominio("data/input.txt", dominio);
+    // Verificar los argumentos correctos
+    if (argc != 3) {
+        if (rank == 0) {
+            printf("Uso: mpirun -np <num_procesos> %s <archivo_entrada.txt> <numero_de_dias>\n", argv[0]);
+        }
+        MPI_Finalize();
+        return 0;
+    }
 
-        // Mostrar el dominio inicial en el proceso 0 (opcional)
-        printf("Dominio inicial en proceso 0:\n");
-        for (int i = 0; i < N; i++) {
-            for (int j = 0; j < N; j++) {
-                printf("%c ", dominio[i][j]);
+    days = atoi(argv[2]);
+
+    // El proceso 0 lee el archivo de entrada
+    if (rank == 0) {
+        FILE *fp = fopen(argv[1], "r");
+        if (fp == NULL) {
+            printf("Error al abrir el archivo %s\n", argv[1]);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        for (int i = 0; i < ROWS; i++) {
+            for (int j = 0; j < COLS; j++) {
+                fscanf(fp, " %c", &domain[i][j]);
             }
-            printf("\n");
+        }
+        fclose(fp);
+    }
+
+    // Broadcast del dominio a todos los procesos
+    MPI_Bcast(&domain[0][0], ROWS * COLS, MPI_CHAR, 0, MPI_COMM_WORLD);
+
+    // Calcular el número de filas por proceso
+    int rows_per_proc = ROWS / size;
+    int remainder = ROWS % size;
+
+    int *counts = malloc(size * sizeof(int));
+    int *displs = malloc(size * sizeof(int));
+
+    int offset = 0;
+    for (int i = 0; i < size; i++) {
+        int rows = rows_per_proc;
+        if (i < remainder) {
+            rows++;
+        }
+        counts[i] = rows * COLS; // Número total de elementos
+        displs[i] = offset;
+        offset += counts[i];
+    }
+
+    int local_elements = counts[rank];
+    int local_rows = local_elements / COLS;
+
+    // Asignar memoria para datos locales
+    char **local_domain = malloc((local_rows + 2) * sizeof(char *));
+    char **new_local_domain = malloc((local_rows + 2) * sizeof(char *));
+    for (int i = 0; i < local_rows + 2; i++) {
+        local_domain[i] = malloc(COLS * sizeof(char));
+        new_local_domain[i] = malloc(COLS * sizeof(char));
+    }
+
+    // Inicializar ghost rows
+    memset(local_domain[0], 0, COLS * sizeof(char));
+    memset(local_domain[local_rows + 1], 0, COLS * sizeof(char));
+
+    // Scatter del dominio a todos los procesos
+    MPI_Scatterv(&domain[0][0], counts, displs, MPI_CHAR,
+                 &local_domain[1][0], local_elements, MPI_CHAR, 0, MPI_COMM_WORLD);
+
+    // Bucle de simulación
+    for (int day = 0; day < days; day++) {
+        // Intercambio de ghost rows con vecinos
+        MPI_Request reqs[4];
+        if (rank > 0) {
+            // Enviar primera fila al proceso anterior
+            MPI_Isend(local_domain[1], COLS, MPI_CHAR, rank - 1, 0, MPI_COMM_WORLD, &reqs[0]);
+            // Recibir ghost row del proceso anterior
+            MPI_Irecv(local_domain[0], COLS, MPI_CHAR, rank - 1, 1, MPI_COMM_WORLD, &reqs[1]);
+        } else {
+            reqs[0] = MPI_REQUEST_NULL;
+            reqs[1] = MPI_REQUEST_NULL;
+        }
+        if (rank < size - 1) {
+            // Enviar última fila al siguiente proceso
+            MPI_Isend(local_domain[local_rows], COLS, MPI_CHAR, rank + 1, 1, MPI_COMM_WORLD, &reqs[2]);
+            // Recibir ghost row del siguiente proceso
+            MPI_Irecv(local_domain[local_rows + 1], COLS, MPI_CHAR, rank + 1, 0, MPI_COMM_WORLD, &reqs[3]);
+        } else {
+            reqs[2] = MPI_REQUEST_NULL;
+            reqs[3] = MPI_REQUEST_NULL;
+        }
+
+        // Esperar a que la comunicación termine
+        MPI_Waitall(4, reqs, MPI_STATUSES_IGNORE);
+
+        // Aplicar las reglas
+        for (int i = 1; i <= local_rows; i++) {
+            for (int j = 0; j < COLS; j++) {
+                int adjacent_trees = 0;
+                int adjacent_lakes = 0;
+
+                // Verificar vecinos
+                for (int di = -1; di <= 1; di++) {
+                    for (int dj = -1; dj <= 1; dj++) {
+                        if (di == 0 && dj == 0)
+                            continue;
+                        int ni = i + di;
+                        int nj = j + dj;
+                        if (nj >= 0 && nj < COLS && ni >= 0 && ni < local_rows + 2) {
+                            char neighbor = local_domain[ni][nj];
+                            if (neighbor == 'a')
+                                adjacent_trees++;
+                            else if (neighbor == 'l')
+                                adjacent_lakes++;
+                        }
+                    }
+                }
+
+                char current = local_domain[i][j];
+
+                // Aplicar reglas
+                if (current == 'a' && adjacent_lakes >= 4) {
+                    new_local_domain[i][j] = 'l';
+                } else if (current == 'l' && adjacent_lakes < 3) {
+                    new_local_domain[i][j] = 'd';
+                } else if (current == 'd' && adjacent_trees >= 3) {
+                    new_local_domain[i][j] = 'a';
+                } else if (current == 'a' && adjacent_trees > 4) {
+                    new_local_domain[i][j] = 'd';
+                } else {
+                    new_local_domain[i][j] = current;
+                }
+            }
+        }
+
+        // Actualizar dominio local
+        for (int i = 1; i <= local_rows; i++) {
+            memcpy(local_domain[i], new_local_domain[i], COLS * sizeof(char));
         }
     }
 
-    // Transmitir el número de días a todos los procesos
-    MPI_Bcast(&dias, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    // Reunir los resultados
+    MPI_Gatherv(&local_domain[1][0], local_rows * COLS, MPI_CHAR,
+                &domain[0][0], counts, displs, MPI_CHAR, 0, MPI_COMM_WORLD);
 
-    // Distribuir la matriz de dominio a todos los procesos (simplificado para matrices pequeñas)
-    MPI_Bcast(dominio, N * N, MPI_CHAR, 0, MPI_COMM_WORLD);
-
-    // Cada proceso simula la evolución del dominio durante los días especificados
-    simulacion_dias(dominio, dias);
-
-    // Recolectar el dominio final en el proceso 0
-    MPI_Gather(dominio, N * N / size, MPI_CHAR, dominio, N * N / size, MPI_CHAR, 0, MPI_COMM_WORLD);
-
-    // El proceso 0 imprime o guarda el dominio final
+    // El proceso 0 escribe el dominio final en el archivo
     if (rank == 0) {
-        printf("\nDominio final después de %d días:\n", dias);
-        for (int i = 0; i < N; i++) {
-            for (int j = 0; j < N; j++) {
-                printf("%c ", dominio[i][j]);
-            }
-            printf("\n");
+        FILE *fp = fopen("final.txt", "w");
+        if (fp == NULL) {
+            printf("Error al abrir el archivo final.txt\n");
+            MPI_Abort(MPI_COMM_WORLD, 1);
         }
+        for (int i = 0; i < ROWS; i++) {
+            for (int j = 0; j < COLS; j++) {
+                fprintf(fp, "%c ", domain[i][j]);
+            }
+            fprintf(fp, "\n");
+        }
+        fclose(fp);
     }
+
+    // Liberar memoria asignada
+    for (int i = 0; i < local_rows + 2; i++) {
+        free(local_domain[i]);
+        free(new_local_domain[i]);
+    }
+    free(local_domain);
+    free(new_local_domain);
+    free(counts);
+    free(displs);
 
     MPI_Finalize();
     return 0;
