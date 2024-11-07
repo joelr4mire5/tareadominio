@@ -12,4 +12,4 @@
 module load mpi
 
 # Ejecutar el programa con mpirun
-mpirun -np 4 ./main data/input.txt  # Cambiar "mi_programa" al nombre de tu ejecutable
+mpirun -np 4 ./main data/input.txt 10
